@@ -1,0 +1,12 @@
+python-dotenv
+streamlit
+pandas
+pyodbc
+sqlalchemy
+
+langgraph
+langchain-core
+langchain-community
+langchain-google-genai
+
+chromadb
