@@ -1,0 +1,57 @@
+# mcp/sp_client.py
+import os
+import io
+import pandas as pd
+from typing import Tuple, List, Dict
+
+from office365.runtime.auth.client_credential import ClientCredential
+from office365.sharepoint.client_context import ClientContext
+
+
+def _get_ctx(site_url: str) -> ClientContext:
+    """
+    Autenticación por credenciales de aplicación (client credentials).
+    Variables requeridas en .env:
+      - SP_TENANT_ID    
+      - SP_CLIENT_ID
+      - SP_CLIENT_SECRET
+    """
+    tenant_id = os.getenv("SP_TENANT_ID")
+    client_id = os.getenv("SP_CLIENT_ID")
+    client_secret = os.getenv("SP_CLIENT_SECRET")
+
+    if not (tenant_id and client_id and client_secret):
+        raise RuntimeError(
+            "Faltan variables .env para SharePoint: SP_TENANT_ID, SP_CLIENT_ID, SP_CLIENT_SECRET"
+        )
+
+    # Nota: para Office365-REST-Python-Client en SharePoint online
+    creds = ClientCredential(client_id, client_secret)
+    ctx = ClientContext(site_url).with_credentials(creds)
+    return ctx
+
+
+def read_excel_from_sharepoint(site_url: str, server_relative_path: str) -> Tuple[List[str], List[Dict]]:
+    """
+    Lee un archivo Excel de SharePoint y retorna (columns, rows) como espera tu MCP.
+
+    :param site_url: p.ej. "https://tasaomega.sharepoint.com/sites/saladecontrolcalidad"
+    :param server_relative_path: p.ej.
+      "/sites/saladecontrolcalidad/Documentos compartidos/04. ARCHIVO HISTORICO/02. CENTRO DE CONTROL/01. POWER BI/04. BIBLIOTECA/2024_REGISTRO_BD-BIBLIOTECA.xlsx"
+    """
+    ctx = _get_ctx(site_url)
+
+    # Descargar a memoria
+    file = ctx.web.get_file_by_server_relative_path(server_relative_path)
+    result = file.download()
+    ctx.execute_query()
+
+    # Cargar al DataFrame
+    bio = io.BytesIO(result.value)
+    df = pd.read_excel(bio)  # usa 'engine="openpyxl"' si tu entorno lo requiere
+
+    # Normaliza salida
+    cols = list(map(str, df.columns))
+    rows = df.replace({pd.NA: None}).to_dict(orient="records")
+    return cols, rows
+    
