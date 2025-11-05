@@ -10,3 +10,8 @@ langchain-community
 langchain-google-genai
 
 chromadb
+
+office365-rest-python-client==2.5.13
+
+
+
