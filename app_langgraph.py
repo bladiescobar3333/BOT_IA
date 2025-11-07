@@ -16,15 +16,6 @@ from security.guardrails_sql import secure_sql_pipeline
 from security.guardrails_output import limit_rows, whitelist_columns, get_whitelist_from_env
 from observability.langsmith_obs import setup_langsmith, audit_event
 
-# Import perezoso/seguro de RAG
-RAG_OK = True
-try:
-    from rag_utils import index_dataframe, query_context
-except Exception as e:
-    RAG_OK = False
-    index_dataframe = query_context = None
-
-
 
 # =========================
 # .env + LangSmith
@@ -83,25 +74,10 @@ with st.sidebar:
     with c2:
         st.caption("Tip: Mantén este comando; ya utiliza tu venv correctamente.")
 
-    # ===== NUEVO BLOQUE RAG =====
     st.header("💾 RAG (opcional)")
-    use_rag = st.checkbox("Usar RAG (activar indexación de resultados grandes)", value=False)
-    # Si rag_utils no cargó, desactiva el toggle
-    if use_rag and not RAG_OK:
-        st.warning("RAG no disponible: corrige dependencias/archivo rag_utils.py. Desactivando…")
-        use_rag = False
-    # Si no hay clave, desactiva el toggle
-    if use_rag and not (google_key or "").strip():
-        st.warning("Falta GOOGLE_API_KEY para embeddings. Desactivando RAG…")
-        use_rag = False
-
-    rag_threshold = st.number_input("Umbral de filas para indexar", min_value=100, max_value=500000, value=5000, step=500)
-    rag_chunk = st.number_input("Tamaño de chunk", min_value=200, max_value=4000, value=1000, step=100)
-    rag_overlap = st.number_input("Solape de chunk", min_value=0, max_value=1000, value=100, step=50)
-    rag_topk = st.slider("Top-K recuperación", min_value=2, max_value=20, value=8)
+    use_rag = st.checkbox("Usar RAG (no requerido para empezar)", value=False)
 
 st.caption("Tip: 'suma DESCARG CALLAO 2024 en prd', 'total DECLARA VEGUETA 2023 en qa', 'Qué es RAP'.")
-
 
 
 # =========================
@@ -368,49 +344,16 @@ def node_sql_exec(state: POIState):
     rows = whitelist_columns(rows, wl)
     rows = limit_rows(rows)
 
-    # === NEW: indexación automática con RAG si resultado es grande ===
-    rag_ctx_val = state.get("rag_ctx") or ""
-    try:
-        if use_rag and len(rows) >= rag_threshold:
-            df_full = pd.DataFrame(rows, columns=cols) if cols else pd.DataFrame(rows)
-            ns = index_dataframe(
-                df=df_full,
-                sql=clean_sql,
-                db=db_used,
-                google_key=google_key,
-                chunk_size=int(rag_chunk),
-                chunk_overlap=int(rag_overlap),
-            )
-            # Recuperamos un contexto base alineado al último prompt del usuario
-            rag_ctx_val = query_context(
-                user_query=state.get("message", ""),
-                namespace=ns,
-                google_key=google_key,
-                k=int(rag_topk),
-            )
-            audit_event("rag_index_ok", {"ns": ns, "rows": len(rows), "topk": int(rag_topk)})
-    except Exception as e:
-        audit_event("rag_index_error", {"err": str(e)})
-
     audit_event("sql_exec_ok", {"db": db_used, "rows": len(rows), "cols": len(cols)})
-    return {**state, "db": db_used, "cols": cols, "rows": rows, "sql": clean_sql, "rag_ctx": rag_ctx_val}
+    return {**state, "db": db_used, "cols": cols, "rows": rows, "sql": clean_sql}
+
 
 def node_chat(state: POIState):
-    # Si el usuario marca RAG pero viene por camino CHAT (sin SQL), intentamos recuperar
-    rag = state.get("rag_ctx") or ""
-    if use_rag and not rag:
-        try:
-            # Heurística: usa el último namespace indexado si lo guardas en sesión.
-            # Para simplificar, intentamos recuperar de "cualquier" colección creada recientemente no es trivial;
-            # aquí solo usamos el rag_ctx si ya lo llenó node_sql_exec. (Suficiente para empezar)
-            pass
-        except Exception as e:
-            audit_event("chat_rag_skip", {"err": str(e)})
-
+    rag = state.get("rag_ctx") or "(sin documentos)"
     ctx = state.get("chat_ctx") or "(sin contexto)"
     raw = (chat_prompt | llm_chat | StrOutputParser()).invoke({
         "system": SYSTEM_PROMPT.format(target_table=target_table),
-        "rag": rag if rag else "(sin documentos)",
+        "rag": rag,
         "ctx": ctx,
         "message": state["message"]
     })
